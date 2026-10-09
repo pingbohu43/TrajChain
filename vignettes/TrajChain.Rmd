@@ -1,0 +1,280 @@
+---
+title: "Getting started with TrajChain"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with TrajChain}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 9, fig.height = 2.9,
+                      out.width = "100%", dpi = 96)
+```
+
+`TrajChain` estimates population-level biomarker trajectories from longitudinal
+cohort studies in which individuals enter at different ages and are followed
+until death or dropout. It implements the nonparametric framework of Hu, Wu,
+Zhao and Sun (*Nonparametric estimation of marker trajectories in the presence
+of death and delayed entry*, manuscript under revision at *Biometrika*). This
+vignette explains the estimands and walks through a complete analysis of a
+simulated cohort.
+
+```{r setup}
+library(TrajChain)
+```
+
+## Why naive age curves are biased
+
+A common way to summarize how a biomarker changes with age is to smooth the
+observed measurements against age. In a cohort that enrolls a cross-sectional
+sample and follows it over time, such a curve mixes three things:
+
+* the **age-related change** that every individual undergoes;
+* **survivor bias**: at older ages only survivors are observed, and if death is
+  associated with the biomarker through unobserved factors, survivors are a
+  selected group;
+* **birth-cohort effects**: individuals observed at older ages were born
+  earlier. Delayed entry (left truncation) means that the cohorts are sampled
+  differently at each age, so differences between birth cohorts leak into the
+  age curve.
+
+## Model and estimands
+
+Let $\tau_0$ be the starting age of the trajectory (age 30 in the ABC-DS
+application of the paper); the target population consists of individuals alive
+at $\tau_0$. For such an individual let $Y^0(t)$ be the marker at age $t$, $T^0$
+the age at death and $Z^0>0$ an unobserved latent variable. The model is
+
+$$E\{Y^0(t) \mid Z^0, T^0 = s\} = Z^0 f(t), \qquad \tau_0 \le t \le s,$$
+
+with $\int_{\tau_0}^{\tau_1} f(t)\,dt = 1$. The **shape function** $f$ is the
+common age-related pattern; $Z^0$ captures individual heterogeneity and may be
+associated with survival, with the age at study entry (birth cohort) and with
+dropout, in ways that are left unspecified. Neither survival times nor the
+reason for dropout need to be observed. Two conditional independence
+assumptions are needed:
+
+* **(A1)** the age at entry $A^0$ is independent of the marker process given
+  $Z^0$ and the age at death, so birth cohorts may differ only through $Z^0$;
+* **(A2)** the dropout index $C$ (the last follow-up visit before loss to
+  follow-up for reasons other than death) is independent of the age at death
+  and the marker process given the entry age and $Z$.
+
+Dropout that depends on the marker values themselves (for example, sicker
+participants leaving the study) violates (A2).
+
+For individuals entering the study at age $t$ (alive at entry), the mean of the
+observed marker is
+
+$$E\{Y(A) \mid A = t\} = \mu_{Z^0}(t)\, f(t), \qquad
+\mu_{Z^0}(t) = E(Z^0 \mid A^0 = t, T^0 \ge t),$$
+
+so a naive Nadaraya--Watson curve estimates the shape distorted by
+$\mu_{Z^0}(t)$. `TrajChain` reports
+
+| Quantity | Formula | Column in `fit$curves` |
+|---|---|---|
+| Shape function | $f(t)$ | `shape` |
+| Unconditional mean | $\mu_{Z^0}(\tau_0)\, f(t)$ | `mean_*` |
+| Birth-cohort-survivor bias | $\mu_{Z^0}(t)/\mu_{Z^0}(\tau_0)$ | `bias_*` |
+| Latent mean among survivors | $\mu_{Z^0}(t)$ | `mu_*` |
+| Simple kernel smoothing | $E\{Y(A) \mid A = t\}$ (baseline) or all visits (pooled) | `nw_*` |
+
+The unconditional mean is the mean trajectory in the absence of death; with
+birth-cohort effects it refers to the subgroup whose starting age coincides
+with the study baseline. The bias curve equals one at $\tau_0$; values below one
+mean that survivors entering at age $t$ have a lower latent level than the
+reference group, i.e. lower marker levels than the reference group would have
+at the same age.
+
+**How $f$ is identified.** For two ages $v$ apart, under (A1)--(A2) the
+nuisance factors cancel in the ratio of means of consecutive measurements, so
+$r(t, t-v) = f(t)/f(t-v)$
+is estimated by a kernel ratio estimator (`ratio_estimate()`). With equally
+spaced visits these ratios are chained along the grid
+$u_j = \tau_0 + (j - 0.5)v$ and normalized to integrate to one (*ratio
+chaining*). With widely or unequally spaced visits, `trajchain()` matches all
+estimable ratios by penalized least squares.
+
+## The data
+
+`simcohort` is a simulated cohort in long format (one row per measurement): 600
+subjects in two groups, a baseline visit and up to two follow-up visits every 16
+months, with deaths, dropout and informative delayed entry.
+
+```{r data}
+head(simcohort)
+table(simcohort$group, simcohort$visit)
+```
+
+`trajchain()` needs a subject-by-visit matrix (`NA` for visits that did not take
+place), the entry ages and the scheduled time between visits.
+`visit_matrix()` builds the matrix from long data:
+
+```{r matrix}
+dA <- subset(simcohort, group == "A")
+YA <- visit_matrix(dA, id = "id", visit = "visit", value = "marker")
+AA <- dA$entry_age[match(rownames(YA), dA$id)]
+head(YA, 4)
+```
+
+Visits are scheduled every 16 months, so the grid step is $v = 16/12$ years. We
+study ages 30 to 59.33, i.e. $m = 22$ grid points, as in the paper's analysis.
+
+## Fitting the model
+
+```{r fit}
+fitA <- trajchain(YA, AA, visit_gaps = 16 / 12, tau0 = 30, m = 22)
+fitA
+```
+
+The defaults follow the paper: ratio bandwidth
+$h = \hat\sigma_A n^{-1/6}$, mean bandwidth $h' = 2.34\,\hat\sigma_A n^{-1/5}$,
+Epanechnikov kernel, and the baseline-measurement estimator of
+$\mu_{Z^0}(t)$, which remains valid in the presence of birth-cohort effects.
+Because `simcohort` is simulated, we can add the true curves (dashed) to the
+plot:
+
+```{r truth}
+tau <- 22 * 16 / 12
+truth_age <- function(shape) {
+  s <- seq(0, 1, length.out = 201)
+  tr <- sim_truth(s, shape = shape, truncation = "informative")
+  data.frame(t = 30 + tau * s, shape = tr$shape / tau, mean = tr$mean, bias = tr$bias)
+}
+plot(fitA, truth = truth_age("monotone"))
+```
+
+The simple kernel smoothing curve (third panel) rises until about age 52 and
+then declines, although the underlying shape keeps increasing: survivors at
+older ages have lower latent levels, which is what the decreasing
+birth-cohort-survivor bias (fourth panel) quantifies. The estimated shape and
+unconditional mean recover the increasing trend. The estimated bias shows a
+bump in the thirties that the true curve does not have; the bootstrap bands
+below show that this part of the curve is estimated with considerable
+uncertainty. The bias and the unconditional mean are anchored at age 30, and few
+subjects enter the study close to that age.
+
+Estimates at particular ages are available from `summary()` and `predict()`:
+
+```{r summary}
+summary(fitA, ages = c(30, 40, 50, 59))$table
+predict(fitA, c(35, 45, 55), type = "mean")
+```
+
+## Bandwidth: rule of thumb and cross-validation
+
+The constant $\kappa$ in $h = \kappa\,\hat\sigma_A n^{-1/6}$ can be chosen by
+five-fold cross-validation with `cv_bandwidth()`. Its criterion compares, in
+held-out subjects, consecutive measurements with the ratio predicted from the
+training subjects. With small samples, averaging over several random partitions
+(`n_repeats`) reduces partition noise.
+
+```{r cv, fig.width = 5, fig.height = 3.5, out.width = "60%"}
+cvA <- cv_bandwidth(YA, AA, visit_gaps = 16 / 12, tau0 = 30, m = 22, n_repeats = 5)
+cvA
+plot(cvA)
+```
+
+Here the criterion is very flat for $\kappa \ge 1$: the data hardly discriminate
+between these bandwidths. A useful practice, as in the paper, is to report the
+rule-of-thumb fit ($\kappa = 1$) and check the sensitivity of the conclusions to
+$\kappa$:
+
+```{r sensitivity}
+fits_kappa <- lapply(c(0.75, 1, 1.5, cvA$constant), function(k) {
+  trajchain(YA, AA, 16 / 12, tau0 = 30, m = 22, bandwidth = k * bw_rot(AA))
+})
+names(fits_kappa) <- paste("kappa =", c(0.75, 1, 1.5, cvA$constant))
+plot_trajectories(fits_kappa, which = c("shape", "mean", "bias"))
+```
+
+The shape function is stable across bandwidths. The unconditional mean and the
+bias curve are anchored at the starting age through
+$\hat\mu_{Z^0}(\tau_0)$, which divides the kernel smoother at $\tau_0$ by
+$\hat f(\tau_0)$, a value extrapolated from the first grid points; they are
+therefore more sensitive to the bandwidth, as observed in the data analysis of
+the paper.
+
+## Bootstrap confidence bands
+
+`trajchain_boot()` resamples subjects with replacement and refits with the
+bandwidths held fixed, giving pointwise standard errors and percentile
+confidence bands for every curve.
+
+```{r boot}
+bootA <- trajchain_boot(fitA, B = 200, seed = 2026)
+summary(bootA, ages = c(35, 45, 55), which = c("shape", "bias"))
+plot(bootA)
+```
+
+The bias curve is fixed at one at age 30 by construction, so its band has zero
+width there. This reflects the normalization rather than precise estimation at
+age 30: the uncertainty about $\hat\mu_{Z^0}(30)$ shows up in the width of the
+bias band at later ages and in the band of the unconditional mean.
+
+## Comparing groups
+
+Analyses stratified by a grouping variable (sex in the paper) are run
+separately and displayed together with `plot_trajectories()`:
+
+```{r groups}
+fit_group <- function(g) {
+  d <- subset(simcohort, group == g)
+  Y <- visit_matrix(d, id = "id", visit = "visit", value = "marker")
+  A <- d$entry_age[match(rownames(Y), d$id)]
+  trajchain(Y, A, visit_gaps = 16 / 12, tau0 = 30, m = 22)
+}
+bootB <- trajchain_boot(fit_group("B"), B = 200, seed = 2027)
+plot_trajectories(list("Group A" = bootA, "Group B" = bootB))
+```
+
+## Which estimator of the mean?
+
+Both estimators of $\mu_{Z^0}(t)$ are computed in every fit:
+
+* `mu_method = "baseline"` (equation 5 of the paper) smooths the baseline
+  measurements only. It is valid under assumptions (A1)--(A2), which allow the
+  entry age, death and dropout to depend on the latent variable, and therefore
+  allows birth-cohort effects. This is the default and was used for the ABC-DS
+  analysis.
+* `mu_method = "pooled"` (equation 6) pools all observed visits. It requires
+  dropout to be independent of $(T, Y, Z)$ given the entry age (assumption
+  A2') and approximates $\mu_{Z^0}(t)$ when the visit gaps are small; with
+  birth-cohort effects and wider gaps it mixes subjects who entered at
+  different ages. It was used in the simulation studies of the paper, where
+  there is no birth-cohort effect.
+
+```{r pooled}
+head(fitA$curves[, c("t", "bias_baseline", "bias_pooled")], 3)
+plot(fitA, which = c("mean", "bias"), mu_method = "pooled")
+```
+
+## Practical notes
+
+* **Scheduled visit times.** Visit $l$ of subject $i$ is placed at
+  $A_i + v_1 + \dots + v_l$, the scheduled time. Small deviations of the actual
+  visit dates are ignored, as in the paper.
+* **Monotone dropout.** The method assumes that a subject is observed at visits
+  $0, 1, \dots, C$ and not afterwards. If a visit is missing but a later one is
+  observed, `trajchain()` warns and uses only pairs of consecutive observed
+  visits.
+* **Undefined ratios.** If some grid age has no pair of consecutive visits within
+  one bandwidth, the ratio estimator is undefined there. The chain estimator
+  then stops with an informative error (increase the bandwidth or narrow
+  $[\tau_0, \tau_1]$); the penalized estimator drops such ratios.
+* **Choice of $\tau_0$.** The unconditional mean and the bias curve are
+  anchored at $\tau_0$, so $\tau_0$ should lie well within the range of entry
+  ages; `trajchain()` warns when fewer than 10 subjects enter within one
+  bandwidth $h'$ of $\tau_0$.
+* **Unequally or widely spaced visits.** Give the vector of gaps in
+  `visit_gaps` (or a finer `grid_step`); `trajchain()` then uses the penalized
+  estimator and chooses the penalty by cross-validation. See
+  `vignette("simulation", package = "TrajChain")`.
+
+## Reference
+
+Hu, P., Wu, Y., Zhao, Y. and Sun, Y. Nonparametric estimation of marker
+trajectories in the presence of death and delayed entry. Manuscript under
+revision at *Biometrika*.

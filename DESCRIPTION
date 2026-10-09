@@ -1,0 +1,47 @@
+Package: TrajChain
+Type: Package
+Title: Nonparametric Marker Trajectories Under Death and Delayed Entry
+Version: 0.1.0
+Authors@R:
+    person("Pingbo", "Hu", , "pingbo.hu@gmail.com", role = c("aut", "cre", "cph"))
+Description: Estimates population-level biomarker trajectories from
+    longitudinal cohort studies that enroll a cross-sectional sample of
+    individuals at different ages and follow them over time. Deaths during
+    follow-up cause informative censoring, and delayed entry induces left
+    truncation that becomes informative in the presence of birth-cohort
+    effects. Under a multiplicative latent-variable model, the common
+    age-related shape of the trajectory is identified by kernel estimators of
+    the ratio of the shape function at pairs of ages and is recovered over the
+    whole age range by ratio chaining, without modeling survival, truncation
+    or dropout beyond two conditional independence assumptions. Penalized
+    extensions handle widely or unequally spaced visits. The package also
+    estimates the unconditional mean trajectory and the composite
+    birth-cohort-survivor bias, selects the bandwidth and the penalty by
+    cross-validation, provides subject-level bootstrap standard errors and
+    confidence bands, and simulates data from the designs studied in the
+    accompanying paper by Hu, Wu, Zhao and Sun.
+License: GPL (>= 3)
+URL: https://github.com/pingbohu43/TrajChain,
+    https://pingbohu43.github.io/TrajChain/
+BugReports: https://github.com/pingbohu43/TrajChain/issues
+Depends:
+    R (>= 3.6.0)
+Imports:
+    graphics,
+    grDevices,
+    parallel,
+    quadprog,
+    stats,
+    utils
+Suggests:
+    knitr,
+    rmarkdown,
+    spelling,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Encoding: UTF-8
+Language: en-US
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1

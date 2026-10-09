@@ -1,0 +1,48 @@
+url: https://pingbohu43.github.io/TrajChain/
+
+template:
+  bootstrap: 5
+  bslib:
+    primary: "#16365c"
+  math-rendering: katex
+
+home:
+  title: "TrajChain: nonparametric marker trajectories under death and delayed entry"
+
+reference:
+  - title: Estimation
+    desc: Fit the shape function, mean trajectories and birth-cohort-survivor bias.
+    contents:
+      - trajchain
+      - trajchain-methods
+      - ratio_estimate
+  - title: Tuning
+    desc: Bandwidths, kernels and cross-validation.
+    contents:
+      - bw_rot
+      - cv_bandwidth
+      - cv_lambda
+      - kernel_function
+  - title: Inference
+    contents:
+      - trajchain_boot
+      - trajchain_boot-methods
+  - title: Graphics
+    contents:
+      - plot_trajectories
+      - plot-trajchain
+      - plot.trajchain_cv
+  - title: Data and simulation
+    contents:
+      - visit_matrix
+      - simcohort
+      - simulate_cohort
+      - sim_truth
+      - shape_functions
+
+articles:
+  - title: Articles
+    navbar: ~
+    contents:
+      - TrajChain
+      - simulation

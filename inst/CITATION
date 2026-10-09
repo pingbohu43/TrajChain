@@ -1,0 +1,26 @@
+bibentry(
+  bibtype = "Unpublished",
+  header = "To cite the methodology implemented in TrajChain, please use:",
+  title = "Nonparametric estimation of marker trajectories in the presence of death and delayed entry",
+  author = c(person("Pingbo", "Hu"), person("Yujian", "Wu"), person("Yize", "Zhao"),
+             person("Yifei", "Sun")),
+  year = "2026",
+  note = "Manuscript under revision at Biometrika",
+  textVersion = paste(
+    "Hu, P., Wu, Y., Zhao, Y. and Sun, Y. (2026).",
+    "Nonparametric estimation of marker trajectories in the presence of death and delayed entry.",
+    "Manuscript under revision at Biometrika.")
+)
+
+bibentry(
+  bibtype = "Manual",
+  header = "To cite the software, please use:",
+  title = "{TrajChain}: Nonparametric Marker Trajectories Under Death and Delayed Entry",
+  author = person("Pingbo", "Hu"),
+  year = "2026",
+  note = sprintf("R package version %s", meta$Version),
+  url = "https://github.com/pingbohu43/TrajChain",
+  textVersion = paste0(
+    "Hu, P. (2026). TrajChain: Nonparametric Marker Trajectories Under Death and Delayed Entry. ",
+    "R package version ", meta$Version, ". https://github.com/pingbohu43/TrajChain")
+)

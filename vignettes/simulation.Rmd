@@ -1,0 +1,195 @@
+---
+title: "Simulation designs, unequal visit spacing and tuning"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Simulation designs, unequal visit spacing and tuning}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 9, fig.height = 2.9,
+                      out.width = "100%", dpi = 96)
+```
+
+This vignette reproduces, on a small scale, the simulation designs of Section 6
+of Hu, Wu, Zhao and Sun, and shows how `TrajChain` handles unequally and widely
+spaced visits. See `vignette("TrajChain")` for an introduction to the model and
+the estimands.
+
+```{r setup}
+library(TrajChain)
+```
+
+## The simulation designs
+
+`simulate_cohort()` generates data on the unit age scale $[0, 1]$. In the
+underlying population the latent variable $Z^0$ is log-normal with mean 1 and
+variance 0.25, the age at death given $Z^0 = z$ is Weibull with shape 4.7 and
+scale $0.85 z^{-1/4.7}$ (so that individuals with larger $Z^0$ die earlier), and
+the marker is $Y^0(t) = Z^0 f(t) e_t$ with log-normal noise of mean 1 and
+variance 0.05. Two shape functions are available:
+
+```{r shapes, fig.width = 5, fig.height = 3.5, out.width = "55%"}
+curve(shape_monotone(x), 0, 1, ylim = c(0.5, 1.6), lwd = 2, col = "#2a78d6",
+      xlab = "t", ylab = "f(t)")
+curve(shape_ushape(x), 0, 1, add = TRUE, lwd = 2, lty = 2, col = "#eb6834")
+legend("topleft", c("monotone", "U-shaped"), lty = 1:2, lwd = 2,
+       col = c("#2a78d6", "#eb6834"), bty = "n")
+```
+
+Entry ages follow either *random truncation*, $A^0 \sim U(-0.3, 1.9)$
+independent of $Z^0$ (no birth-cohort effect), or *informative truncation*,
+where $A^0 + 0.3$ given $Z^0 = z$ is Weibull with shape 3.2 and scale
+$1.2 z^{-1/3.2}$ (a birth-cohort effect). Only individuals alive at entry are
+enrolled (about half of the population). Each subject has a baseline visit and
+up to five follow-up visits, either equally spaced with gap
+$1/\lfloor 6 n^{0.16}\rfloor$ or unequally spaced with gaps
+$(0.10, 0.10, 0.12, 0.10, 0.12)$; follow-up stops at death or dropout.
+
+```{r simulate}
+sim <- simulate_cohort(n = 1000, shape = "monotone", seed = 1)
+sim
+```
+
+`sim_truth()` computes the true curves by numerical integration. Under random
+truncation, $\mu_{Z^0}(t) = E(Z^0 \mid T^0 \ge t)$ is the pure survivor bias and
+$\mu_{Z^0}(0) = 1$:
+
+```{r truth}
+sim_truth(c(0, 0.25, 0.5, 0.75, 1))
+```
+
+## Equally spaced visits
+
+There is no birth-cohort effect and dropout is unrelated to the latent
+variable, so assumption (A2') holds and the pooled estimator of
+$\mu_{Z^0}(t)$ (equation 6) can be used, as in the paper.
+
+```{r equal}
+fit <- trajchain(sim$Y, sim$entry_age, sim$visit_gaps, tau0 = 0, tau1 = 1,
+                 mu_method = "pooled")
+plot(fit, truth = sim_truth(fit$curves$t), xlab = "t")
+```
+
+### A small Monte Carlo study
+
+The following loop repeats the analysis for 50 data sets and summarizes the
+pointwise bias and standard deviation of $\hat f$ at $t = 0, 0.1, \dots, 1$, as
+in the supplementary tables of the paper (which use 1000 replicates).
+
+```{r mc}
+R <- 50
+ages <- seq(0, 1, by = 0.1)
+est <- t(vapply(seq_len(R), function(r) {
+  s <- simulate_cohort(n = 1000, shape = "monotone", seed = r)
+  f <- trajchain(s$Y, s$entry_age, s$visit_gaps, tau0 = 0, tau1 = 1,
+                 mu_method = "pooled", n_grid = 101)
+  predict(f, ages, type = "shape")
+}, numeric(length(ages))))
+round(rbind(bias = colMeans(est) - shape_monotone(ages),
+            sd = apply(est, 2, sd)), 3)
+```
+
+```{r mc-plot, fig.width = 5, fig.height = 3.5, out.width = "55%"}
+matplot(ages, t(est), type = "l", lty = 1, col = grDevices::adjustcolor("#2a78d6", 0.25),
+        xlab = "t", ylab = "estimated f(t)")
+lines(ages, colMeans(est), lwd = 2, lty = 2, col = "#e34948")
+curve(shape_monotone(x), 0, 1, add = TRUE, lwd = 2)
+legend("topleft", c("replicates", "pointwise mean", "truth"), bty = "n",
+       col = c("#2a78d6", "#e34948", "black"), lty = c(1, 2, 1), lwd = c(1, 2, 2))
+```
+
+## Unequally spaced visits
+
+With gaps $(5, 5, 6, 5, 6) \times 0.02$, ratios are directly estimable only for
+ages $0.10$ or $0.12$ apart. `trajchain()` takes the greatest common divisor of
+the gaps, $0.02$, as the grid step ($m = 50$), estimates every ratio
+$\hat r(u_j, u_{j'})$ with $u_j - u_{j'} \in \{0.10, 0.12\}$, and combines them
+by penalized weighted least squares (Section 5 of the paper). Ratios based on
+fewer than $c^* = 0.6\,n h$ observations receive zero weight.
+
+The penalty $\lambda$ is chosen by five-fold cross-validation over the grid
+used in the paper (25 values from $10^{-6}$ to $10^{-2}$):
+
+```{r unequal-cv, fig.width = 5, fig.height = 3.5, out.width = "55%"}
+sim3 <- simulate_cohort(n = 1000, shape = "ushape", visit_gaps = "unequal", seed = 3)
+cvl <- cv_lambda(sim3$Y, sim3$entry_age, sim3$visit_gaps, tau0 = 0, tau1 = 1)
+cvl$lambda
+plot(cvl)
+```
+
+```{r unequal-fit}
+fit3 <- trajchain(sim3$Y, sim3$entry_age, sim3$visit_gaps, tau0 = 0, tau1 = 1,
+                  lambda = cvl, mu_method = "pooled")
+fit3
+head(fit3$pairs)
+plot(fit3, which = c("shape", "mean", "bias"),
+     truth = sim_truth(fit3$curves$t, shape = "ushape"), xlab = "t")
+```
+
+`trajchain(..., lambda = "cv")` (the default for the penalized estimator) runs
+the same cross-validation internally.
+
+The penalized problem is normalized so that the estimate integrates to one.
+By default (`constraint = "anchor"`) it is solved in closed form with the first
+grid value fixed and then rescaled, which is the implementation used for the
+results in the paper. `constraint = "integral"` instead solves the quadratic
+program with the integral and non-negativity constraints:
+
+```{r integral}
+fit3q <- trajchain(sim3$Y, sim3$entry_age, sim3$visit_gaps, tau0 = 0, tau1 = 1,
+                   lambda = cvl$lambda, constraint = "integral", mu_method = "pooled")
+max(abs(fit3q$curves$shape - fit3$curves$shape))
+```
+
+## Widely spaced visits
+
+When visits are far apart, a grid with the visit gap as its step is coarse.
+Section 5 of the paper refines the grid to step $v/q$; the ratios then define
+$q$ interleaved chains, which the penalty links together. In `trajchain()` this
+only requires `grid_step`:
+
+```{r wide}
+simw <- simulate_cohort(n = 1000, visit_gaps = rep(0.1, 5), seed = 4)
+fit_coarse <- trajchain(simw$Y, simw$entry_age, simw$visit_gaps, tau0 = 0, tau1 = 1,
+                        mu_method = "pooled")
+fit_fine <- trajchain(simw$Y, simw$entry_age, simw$visit_gaps, tau0 = 0, tau1 = 1,
+                      grid_step = 0.05, mu_method = "pooled")
+c(coarse = fit_coarse$design$m, fine = fit_fine$design$m)
+plot_trajectories(list("chain, step 0.1" = fit_coarse, "penalized, step 0.05" = fit_fine),
+                  which = c("shape", "mean"), truth = sim_truth(seq(0, 1, by = 0.01)),
+                  xlab = "t")
+```
+
+## Informative truncation
+
+With informative truncation, the entry age depends on $Z^0$ and
+$\mu_{Z^0}(t) = E(Z^0 \mid A^0 = t, T^0 \ge t)$ combines survivor and
+birth-cohort selection. The baseline estimator (equation 5), the default,
+remains valid:
+
+```{r informative}
+simi <- simulate_cohort(n = 2000, truncation = "informative", seed = 5)
+fiti <- trajchain(simi$Y, simi$entry_age, simi$visit_gaps, tau0 = 0, tau1 = 1)
+plot(fiti, which = c("shape", "mean", "bias"),
+     truth = sim_truth(fiti$curves$t, truncation = "informative"), xlab = "t")
+```
+
+## Running the full simulation study
+
+The paper uses 1000 replicates for each design and sample size. The code below
+(not run here) parallelizes over replicates and stores the curves on the
+dense grid; since every replicate re-creates its data from its seed, no objects
+need to be exported to the workers.
+
+```{r full, eval = FALSE}
+library(parallel)
+one_replicate <- function(seed, n) {
+  s <- simulate_cohort(n = n, shape = "monotone", seed = seed)
+  f <- trajchain(s$Y, s$entry_age, s$visit_gaps, tau0 = 0, tau1 = 1, mu_method = "pooled")
+  f$curves[, c("shape", "mean_pooled", "bias_pooled")]
+}
+res <- mclapply(1:1000, one_replicate, n = 1000, mc.cores = detectCores() - 1)
+shape_mat <- t(vapply(res, function(r) r$shape, numeric(801)))
+```
